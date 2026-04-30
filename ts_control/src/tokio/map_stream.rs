@@ -12,10 +12,12 @@ use url::Url;
 
 use crate::{DialPlan, NodeId};
 
-#[derive(Debug, thiserror::Error)]
-#[error("Error sending map request")]
-pub(crate) enum MapStreamError {
+// These are all internal errors (i.e., unexpected and not due to any user input).
+#[derive(Debug, thiserror::Error, Clone, Copy, Eq, PartialEq)]
+pub enum MapStreamError {
+    #[error("serialization error")]
     SerDe,
+    #[error("unsuccessful HTTP request or upgrade")]
     Http,
 }
 
@@ -36,11 +38,12 @@ impl From<ts_http_util::Error> for MapStreamError {
 impl From<MapStreamError> for crate::Error {
     fn from(e: MapStreamError) -> Self {
         match e {
-            MapStreamError::SerDe => {
-                crate::Error::Internal(crate::ErrorKind::SerDe, crate::ConnectionPhase::MapRequest)
-            }
+            MapStreamError::SerDe => crate::Error::Internal(
+                crate::InternalErrorKind::SerDe,
+                crate::Operation::MapRequest,
+            ),
             MapStreamError::Http => {
-                crate::Error::Internal(crate::ErrorKind::Http, crate::ConnectionPhase::MapRequest)
+                crate::Error::Internal(crate::InternalErrorKind::Http, crate::Operation::MapRequest)
             }
         }
     }
@@ -85,7 +88,7 @@ pub struct StateUpdate {
     pub dial_plan: Option<DialPlan>,
 }
 
-pub(crate) fn map_stream(reader: impl AsyncRead + Unpin) -> impl Stream<Item = StateUpdate> {
+pub fn map_stream(reader: impl AsyncRead + Unpin) -> impl Stream<Item = StateUpdate> {
     futures_util::stream::unfold(reader, async |mut reader| {
         let msg_len = reader
             .read_u32_le()
@@ -189,7 +192,7 @@ fn packet_filter(map_response: &MapResponse<'_>) -> Option<FilterUpdate> {
 }
 
 #[tracing::instrument(skip_all, fields(map_url = %url.as_str()))]
-pub(super) async fn send_map_request(
+pub async fn send_map_request(
     map_request: MapRequest<'_>,
     url: &Url,
     http2_conn: &Http2<BytesBody>,
